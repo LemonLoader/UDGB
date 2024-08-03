@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using _UnityVersion = AssetRipper.Primitives.UnityVersion;
 
 namespace UDGB
 {
@@ -6,46 +7,30 @@ namespace UDGB
     {
         internal static List<UnityVersion> VersionTbl = new List<UnityVersion>();
         internal static string UnityURL = "https://unity3d.com/get-unity/download/archive";
-        internal int[] Version = { 0, 0, 0, 0 };
-        internal string VersionStr = null;
-        internal string FullVersionStr = null;
+        internal _UnityVersion Version = _UnityVersion.MinVersion;
         internal string DownloadURL = null;
         internal string HashStr = null;
         internal bool UsePayloadExtraction = false;
 
-        internal UnityVersion(string version, string fullversion, string downloadurl)
+        internal UnityVersion(string fullversion, string downloadurl)
         {
-            VersionStr = version;
-            FullVersionStr = fullversion;
-            DownloadURL = downloadurl;
-
-            string[] versiontbl = version.Split('.');
-            for (int i = 0; i < versiontbl.Length; i++)
-            {
-                int output = 0;
-                if (!int.TryParse(versiontbl[i], out output))
-                    continue;
-                Version[i] = output;
-            }
-
+            Version = _UnityVersion.Parse(fullversion);
 
             string[] downloadurl_splices = downloadurl.Split('/');
-            if ((Version[0] < 5)
-                || ((Version[0] == 5) && (Version[1] < 3))
-                || downloadurl_splices[4].EndsWith(".exe"))
+            if (Version < _UnityVersion.Parse("5.3.99") || downloadurl_splices[4].EndsWith(".exe"))
             {
-                Logger.DebugMsg($"{VersionStr} - {DownloadURL}");
+                Logger.DebugMsg($"{Version.ToStringWithoutType()} - {DownloadURL}");
                 return;
             }
 
             UsePayloadExtraction = true;
             HashStr = downloadurl_splices[4];
             DownloadURL = $"https://download.unity3d.com/download_unity/{HashStr}/MacEditorTargetInstaller/UnitySetup-Windows-";
-            if (Version[0] >= 2018)
+            if (Version >= _UnityVersion.Parse("2018.0.0"))
                 DownloadURL += "Mono-";
-            DownloadURL += $"Support-for-Editor-{FullVersionStr}.pkg";
+            DownloadURL += $"Support-for-Editor-{Version}.pkg";
 
-            Logger.DebugMsg($"{VersionStr} - {HashStr} - {DownloadURL}");
+            Logger.DebugMsg($"{Version.ToStringWithoutType()} - {HashStr} - {DownloadURL}");
         }
 
         internal static void Refresh()
@@ -71,16 +56,12 @@ namespace UDGB
                 string url = pageSource.Substring(0, end);
 
                 string[] parts = url.Split('/');
-                string foundVersion = parts[0];
+                string fullVersion = parts[0];
                 string hash = parts[1];
-
-                string fullVersion = foundVersion;
-                if (foundVersion.Contains("f"))
-                    foundVersion = foundVersion.Substring(0, foundVersion.IndexOf("f"));
 
                 string foundUrl = $"https://download.unity3d.com/download_unity/{hash}/Windows64EditorInstaller/UnitySetup64-{fullVersion}.exe";
 
-                VersionTbl.Add(new UnityVersion(foundVersion, fullVersion, foundUrl));
+                VersionTbl.Add(new UnityVersion(fullVersion, foundUrl));
             }
 
             VersionTbl.Reverse();

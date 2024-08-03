@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Threading;
+using _UnityVersion = AssetRipper.Primitives.UnityVersion;
 
 namespace UDGB
 {
@@ -80,7 +81,7 @@ namespace UDGB
         }
 
         private static UnityVersion GetUnityVersionFromString(string requested_version) =>
-            UnityVersion.VersionTbl.FirstOrDefault(x => x.VersionStr.Equals(requested_version) || x.FullVersionStr.Equals(requested_version));
+            UnityVersion.VersionTbl.FirstOrDefault(x => x.Version.ToString().Equals(requested_version) || x.Version.ToStringWithoutType().Equals(requested_version));
 
         private static bool ProcessSpecific(string requested_version)
         {
@@ -98,13 +99,12 @@ namespace UDGB
             if ((OperationMode == OperationModes.Android_Il2Cpp)
                 || (OperationMode == OperationModes.Android_Mono))
             {
-                if (((version.Version[0] == 5) && (version.Version[1] <= 2))
-                    || (version.Version[0] < 5))
+                if (version.Version <= _UnityVersion.Parse("5.2.99"))
                 {
                     if (should_error)
-                        Logger.Error($"{version.VersionStr} Has No Android Support Installer!");
+                        Logger.Error($"{version.Version} Has No Android Support Installer!");
                     else
-                        Logger.Warning($"{version.VersionStr} Has No Android Support Installer!");
+                        Logger.Warning($"{version.Version} Has No Android Support Installer!");
                     return false;
                 }
             }
@@ -120,15 +120,18 @@ namespace UDGB
                 if (!VersionFilter(version, false))
                     continue;
 
-                string zip_path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, (version.VersionStr + ".zip"));
+                string zip_path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, (version.Version.ToStringWithoutType() + ".zip"));
                 if (File.Exists(zip_path))
                 {
-                    Logger.Warning($"{version.VersionStr} Zip Already Exists! Skipping...");
+                    Logger.Warning($"{version.Version} Zip Already Exists! Skipping...");
                     continue;
                 }
-                Logger.Msg($"{version.VersionStr} Zip Doesn't Exist! Adding to Download List...");
+                Logger.Msg($"{version.Version} Zip Doesn't Exist! Adding to Download List...");
                 sortedversiontbl.Add(version);
             }
+
+            sortedversiontbl.Reverse();
+
             int error_count = 0;
             if (sortedversiontbl.Count >= 1)
             {
@@ -158,7 +161,7 @@ namespace UDGB
             if (!VersionFilter(version))
                 return false;
 
-            string zip_path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"{version.VersionStr}.zip");
+            string zip_path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"{version.Version.ToStringWithoutType()}.zip");
             if (File.Exists(zip_path))
                 File.Delete(zip_path);
 
@@ -167,7 +170,10 @@ namespace UDGB
                 || (OperationMode == OperationModes.Android_Mono))
             {
                 downloadurl = downloadurl.Substring(0, downloadurl.LastIndexOf("/"));
-                downloadurl = $"{downloadurl.Substring(0, downloadurl.LastIndexOf("/"))}/TargetSupportInstaller/UnitySetup-Android-Support-for-Editor-{version.FullVersionStr}.exe";
+                if (version.UsePayloadExtraction)
+                    downloadurl = $"{downloadurl.Substring(0, downloadurl.LastIndexOf("/"))}/MacEditorTargetInstaller/UnitySetup-Android-Support-for-Editor-{version.Version}.pkg";
+                else
+                    downloadurl = $"{downloadurl.Substring(0, downloadurl.LastIndexOf("/"))}/TargetSupportInstaller/UnitySetup-Android-Support-for-Editor-{version.Version}.exe";
             }
 
             Logger.Msg($"Downloading {downloadurl}");
@@ -200,7 +206,7 @@ namespace UDGB
 
             if (was_error)
                 return false;
-            Logger.Msg($"{version.VersionStr} Zip Successfully Created!");
+            Logger.Msg($"{version.Version.ToStringWithoutType()} Zip Successfully Created!");
             return true;
         }
 
@@ -208,34 +214,30 @@ namespace UDGB
         {
             string internal_path = null;
             string archive_path = cache_path;
+
+            if (version.UsePayloadExtraction)
+            {
+                Logger.Msg("Extracting Payload...");
+                if (!ArchiveHandler.ExtractFiles(AppDomain.CurrentDomain.BaseDirectory, archive_path, "Payload~"))
+                    return false;
+                archive_path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Payload~");
+            }
+
             switch (OperationMode)
             {
                 // Unity Dependencies for Unstripping Only
                 case OperationModes.Normal:
                 default:
-                    if (version.Version[0] == 3)
+                    if (version.Version < _UnityVersion.Parse("4.5.0"))
                         internal_path = "Data/PlaybackEngines/windows64standaloneplayer/";
-                    else if (version.Version[0] == 4)
-                    {
-                        if (version.Version[1] >= 5)
-                            internal_path = "Data/PlaybackEngines/windowsstandalonesupport/Variations/win64_nondevelopment/Data/";
-                        else
-                            internal_path = "Data/PlaybackEngines/windows64standaloneplayer/";
-                    }
-                    else if ((version.Version[0] == 5) && (version.Version[1] <= 2))
+                    else if (version.Version < _UnityVersion.Parse("5.0.0"))
+                        internal_path = "Data/PlaybackEngines/windowsstandalonesupport/Variations/win64_nondevelopment/Data/";
+                    else if (version.Version < _UnityVersion.Parse("5.3.0"))
                         internal_path = "./Unity/Unity.app/Contents/PlaybackEngines/WindowsStandaloneSupport/Variations/win64_nondevelopment_mono/Data/";
-                    else if (version.Version[0] > 2021 || (version.Version[0] == 2021 && version.Version[1] >= 2))
+                    else if (version.Version < _UnityVersion.Parse("2021.2"))
                         internal_path = "./Variations/win64_player_nondevelopment_mono/Data/";
                     else
                         internal_path = "./Variations/win64_nondevelopment_mono/Data/";
-
-                    if (version.UsePayloadExtraction)
-                    {
-                        Logger.Msg($"Extracting Payload...");
-                        if (!ArchiveHandler.ExtractFiles(AppDomain.CurrentDomain.BaseDirectory, archive_path, "Payload~"))
-                            return false;
-                        archive_path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Payload~");
-                    }
 
                     Logger.Msg("Extracting DLLs from Archive...");
                     return ArchiveHandler.ExtractFiles(temp_folder_path, archive_path, internal_path + "Managed/*.dll");
@@ -247,6 +249,12 @@ namespace UDGB
                     string rootpath = "$INSTDIR$*";
                     string basefolder = $"{rootpath}/Variations/{((OperationMode == OperationModes.Android_Il2Cpp) ? "il2cpp" : "mono")}/";
                     string libfilename = "libunity.so";
+
+                    if (version.UsePayloadExtraction)
+                    {
+                        rootpath = "./Variations";
+                        basefolder = $"{rootpath}/{((OperationMode == OperationModes.Android_Il2Cpp) ? "il2cpp" : "mono")}/";
+                    }
 
                     Logger.Msg($"Extracting {libfilename} from Archive...");
                     if (!ArchiveHandler.ExtractFiles(temp_folder_path, archive_path, $"{basefolder}Release/Libs/*/{libfilename}", true))
