@@ -29,7 +29,7 @@ namespace UDGB
             {
                 StartInfo = new ProcessStartInfo("7zip")
                 {
-                    FileName = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "7z/7z.exe"),
+                    FileName = "7z", // assumes part of PATH
                     WorkingDirectory = AppDomain.CurrentDomain.BaseDirectory,
                     Arguments = string.Join(" ", new string[] {
                         keep_file_path ? "x" : "e",
