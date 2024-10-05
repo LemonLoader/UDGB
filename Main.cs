@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Threading;
+using System.IO.Compression;
 using _UnityVersion = AssetRipper.Primitives.UnityVersion;
 
 namespace UDGB
@@ -13,6 +14,7 @@ namespace UDGB
         internal static WebClient webClient = new WebClient();
         private static string cache_path = null;
         private static string temp_folder_path = null;
+        private static bool strip_zips = false;
         private static int cooldown_interval = 5; // In Seconds
 
         internal enum OperationModes
@@ -25,6 +27,9 @@ namespace UDGB
 
         public static int Main(string[] args)
         {
+            if (args[0] == "list")
+                Logger.Active = false;
+
             ServicePointManager.UseNagleAlgorithm = true;
             ServicePointManager.Expect100Continue = true;
             ServicePointManager.CheckCertificateRevocationList = true;
@@ -39,23 +44,11 @@ namespace UDGB
             if (File.Exists(cache_path))
                 File.Delete(cache_path);
 
-            if ((args.Length < 1) || (args.Length > 2) || string.IsNullOrEmpty(args[0]))
+            if ((args.Length < 1) || string.IsNullOrEmpty(args[0]))
             {
                 Logger.Error("Bad arguments for extractor process; expected arguments: <unityVersion>");
                 return -1;
             }
-
-            string requested_version = args[0];
-
-            OperationMode = (requested_version.EndsWith(";android")
-                || requested_version.EndsWith(";android_il2cpp"))
-                ? OperationModes.Android_Il2Cpp
-                : (requested_version.EndsWith(";android_mono")
-                ? OperationModes.Android_Mono
-                : OperationModes.Normal);
-
-            if (OperationMode != OperationModes.Normal)
-                requested_version = requested_version.Substring(0, requested_version.LastIndexOf(";"));
 
             UnityVersion.Refresh();
             if (UnityVersion.VersionTbl.Count <= 0)
@@ -64,20 +57,54 @@ namespace UDGB
                 return -1;
             }
 
-            if ((args.Length == 2) && !string.IsNullOrEmpty(args[1]))
+            if (args[0] == "list")
             {
+                List<string> noTypeVersions = [];
+                foreach (var version in UnityVersion.VersionTbl)
+                {
+                    string type = version.Version.ToStringWithoutType();
+                    if (!noTypeVersions.Contains(type))
+                        noTypeVersions.Add(type);
+                }
+
+                foreach (var version in noTypeVersions)
+                {
+                    Console.WriteLine(version);
+                }
+
+                return 0;
+            }
+
+            if (args.Any(a => a == "--strip"))
+                strip_zips = true;
+
+            int exitCode = 0;
+
+            foreach (var arg in args)
+            {
+                if (arg.StartsWith("--"))
+                    continue;
+
+                string requested_version = arg;
+
+                OperationMode = OperationModes.Android_Il2Cpp;
+
                 UnityVersion version = GetUnityVersionFromString(requested_version);
                 if (version == null)
                 {
                     Logger.Error($"Failed to Find Unity Version [{requested_version}] in List!");
                     return -1;
                 }
-                cache_path = args[1];
-                try { return ExtractFilesFromArchive(version) ? 0 : -1; }
-                catch (Exception x) { Logger.Error(x.ToString()); return -1; }
+
+                exitCode |= ProcessSpecific(requested_version) ? 0 : -1;
+
+                if (Directory.Exists(temp_folder_path))
+                    Directory.Delete(temp_folder_path, true);
+                if (File.Exists(cache_path))
+                    File.Delete(cache_path);
             }
 
-            return (requested_version.StartsWith("--all") ? (ProcessAll() ? 0 : -1) : (ProcessSpecific(requested_version) ? 0 : -1));
+            return exitCode;
         }
 
         private static UnityVersion GetUnityVersionFromString(string requested_version) =>
@@ -112,56 +139,15 @@ namespace UDGB
             return true;
         }
 
-        private static bool ProcessAll()
-        {
-            List<UnityVersion> sortedversiontbl = new List<UnityVersion>();
-            foreach (UnityVersion version in UnityVersion.VersionTbl)
-            {
-                if (!VersionFilter(version, false))
-                    continue;
-
-                string zip_path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, (version.Version.ToStringWithoutType() + ".zip"));
-                if (File.Exists(zip_path))
-                {
-                    Logger.Warning($"{version.Version} Zip Already Exists! Skipping...");
-                    continue;
-                }
-                Logger.Msg($"{version.Version} Zip Doesn't Exist! Adding to Download List...");
-                sortedversiontbl.Add(version);
-            }
-
-            sortedversiontbl.Reverse();
-
-            int error_count = 0;
-            if (sortedversiontbl.Count >= 1)
-            {
-                int success_count = 0;
-                foreach (UnityVersion version in sortedversiontbl)
-                {
-                    if (ProcessUnityVersion(version))
-                        success_count += 1;
-                    else
-                    {
-                        Logger.Warning("Failure Detected! Skipping to Next Version...");
-                        error_count += 1;
-                    }
-                    Logger.Msg($"Cooldown Active for {cooldown_interval} seconds...");
-                    Thread.Sleep(cooldown_interval * 1000);
-                }
-                if (error_count > 0)
-                    Logger.Error($"{error_count} Failures");
-                if (success_count > 0)
-                    Logger.Msg($"{success_count} Successful Zip Creations");
-            }
-            return (error_count <= 0);
-        }
-
         private static bool ProcessUnityVersion(UnityVersion version)
         {
             if (!VersionFilter(version))
                 return false;
 
-            string zip_path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"{version.Version.ToStringWithoutType()}.zip");
+            string zips_path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "zips");
+            string zip_path = Path.Combine(zips_path, $"{version.Version.ToStringWithoutType()}.zip");
+            if (!Directory.Exists(zips_path))
+                Directory.CreateDirectory(zips_path);
             if (File.Exists(zip_path))
                 File.Delete(zip_path);
 
@@ -210,6 +196,11 @@ namespace UDGB
             return true;
         }
 
+        private static void StripDependencyZip()
+        {
+
+        }
+
         private static bool ExtractFilesFromArchive(UnityVersion version)
         {
             string internal_path = null;
@@ -246,45 +237,79 @@ namespace UDGB
                 // Full Android Libraries
                 case OperationModes.Android_Il2Cpp:
                 case OperationModes.Android_Mono:
-                    string rootpath = "$INSTDIR$*";
-                    string basefolder = $"{rootpath}/Variations/{((OperationMode == OperationModes.Android_Il2Cpp) ? "il2cpp" : "mono")}/";
-                    string libfilename = "libunity.so";
-
-                    if (version.UsePayloadExtraction)
                     {
-                        rootpath = "./Variations";
-                        basefolder = $"{rootpath}/{((OperationMode == OperationModes.Android_Il2Cpp) ? "il2cpp" : "mono")}/";
+                        string rootpath = "$INSTDIR$*";
+                        string basefolder = $"{rootpath}/Variations/{((OperationMode == OperationModes.Android_Il2Cpp) ? "il2cpp" : "mono")}/";
+                        string libfilename = "libunity.so";
+
+                        if (version.UsePayloadExtraction)
+                        {
+                            rootpath = "./Variations";
+                            basefolder = $"{rootpath}/{((OperationMode == OperationModes.Android_Il2Cpp) ? "il2cpp" : "mono")}/";
+                        }
+
+                        Logger.Msg($"Extracting {libfilename} from Archive...");
+                        if (!ArchiveHandler.ExtractFiles(temp_folder_path, archive_path, $"{basefolder}Release/Libs/*/{libfilename}", true))
+                            return false;
+
+                        if (strip_zips)
+                        {
+                            Logger.Msg("Fixing Folder Structure...");
+                            string libsfolderpath = Path.Combine(temp_folder_path);
+                            if (!Directory.Exists(libsfolderpath))
+                                Directory.CreateDirectory(libsfolderpath);
+                            foreach (string filepath in Directory.GetFiles(temp_folder_path, libfilename, SearchOption.AllDirectories))
+                            {
+                                Logger.Msg($"Moving {filepath}");
+                                DirectoryInfo dir = new DirectoryInfo(Path.GetDirectoryName(filepath));
+
+                                if (!dir.Name.EndsWith("arm64-v8a") && !dir.Name.EndsWith("armeabi-v7a"))
+                                {
+                                    dir.Delete(true);
+                                    continue;
+                                }
+
+                                string newpath = Path.Combine(libsfolderpath, dir.Name);
+                                if (!Directory.Exists(newpath))
+                                    Directory.CreateDirectory(newpath);
+                                File.Move(filepath, Path.Combine(newpath, Path.GetFileName(filepath)));
+                            }
+
+                            string rootfolder = Directory.GetDirectories(temp_folder_path, rootpath).First();
+                            Logger.Msg($"Removing {rootfolder}");
+                            Directory.Delete(rootfolder, true);
+
+                            return true;
+                        }
+                        else
+                        {
+                            Logger.Msg("Fixing Folder Structure...");
+                            string libsfolderpath = Path.Combine(temp_folder_path, "Libs");
+                            if (!Directory.Exists(libsfolderpath))
+                                Directory.CreateDirectory(libsfolderpath);
+                            foreach (string filepath in Directory.GetFiles(temp_folder_path, libfilename, SearchOption.AllDirectories))
+                            {
+                                Logger.Msg($"Moving {filepath}");
+                                DirectoryInfo dir = new DirectoryInfo(Path.GetDirectoryName(filepath));
+
+                                string newpath = Path.Combine(libsfolderpath, dir.Name);
+                                if (!Directory.Exists(newpath))
+                                    Directory.CreateDirectory(newpath);
+                                File.Move(filepath, Path.Combine(newpath, Path.GetFileName(filepath)));
+                            }
+
+                            string rootfolder = Directory.GetDirectories(temp_folder_path, rootpath).First();
+                            Logger.Msg($"Removing {rootfolder}");
+                            Directory.Delete(rootfolder, true);
+
+                            Logger.Msg($"Extracting Managed Folder...");
+                            string newmanagedfolder = Path.Combine(temp_folder_path, "Managed");
+                            if (!Directory.Exists(newmanagedfolder))
+                                Directory.CreateDirectory(newmanagedfolder);
+
+                            return ArchiveHandler.ExtractFiles(newmanagedfolder, archive_path, basefolder + "Managed/*.dll");
+                        }
                     }
-
-                    Logger.Msg($"Extracting {libfilename} from Archive...");
-                    if (!ArchiveHandler.ExtractFiles(temp_folder_path, archive_path, $"{basefolder}Release/Libs/*/{libfilename}", true))
-                        return false;
-
-                    Logger.Msg("Fixing Folder Structure...");
-                    string libsfolderpath = Path.Combine(temp_folder_path, "Libs");
-                    if (!Directory.Exists(libsfolderpath))
-                        Directory.CreateDirectory(libsfolderpath);
-                    foreach (string filepath in Directory.GetFiles(temp_folder_path, libfilename, SearchOption.AllDirectories))
-                    {
-                        Logger.Msg($"Moving {filepath}");
-                        DirectoryInfo dir = new DirectoryInfo(Path.GetDirectoryName(filepath));
-
-                        string newpath = Path.Combine(libsfolderpath, dir.Name);
-                        if (!Directory.Exists(newpath))
-                            Directory.CreateDirectory(newpath);
-                        File.Move(filepath, Path.Combine(newpath, Path.GetFileName(filepath)));
-                    }
-
-                    string rootfolder = Directory.GetDirectories(temp_folder_path, rootpath).First();
-                    Logger.Msg($"Removing {rootfolder}");
-                    Directory.Delete(rootfolder, true);
-
-                    Logger.Msg($"Extracting Managed Folder...");
-                    string newmanagedfolder = Path.Combine(temp_folder_path, "Managed");
-                    if (!Directory.Exists(newmanagedfolder))
-                        Directory.CreateDirectory(newmanagedfolder);
-
-                    return ArchiveHandler.ExtractFiles(newmanagedfolder, archive_path, basefolder + "Managed/*.dll");
             }
         }
     }

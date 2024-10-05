@@ -5,6 +5,8 @@ namespace UDGB
 {
     internal class Logger
     {
+        internal static bool Active = true;
+
 #if DEBUG
         private static bool DEBUG = true;
 #else
@@ -26,6 +28,9 @@ namespace UDGB
 
         internal static void Msg(string str)
         {
+            if (!Active)
+                return;
+
             Console.WriteLine(str);
             if (!ShouldLogToFile || (sr == null))
                 return;
@@ -35,6 +40,9 @@ namespace UDGB
 
         internal static void Warning(string str)
         {
+            if (!Active)
+                return;
+
             var oldColor = Console.ForegroundColor;
             Console.ForegroundColor = ConsoleColor.Yellow;
             Console.WriteLine(str);
@@ -47,6 +55,9 @@ namespace UDGB
 
         internal static void Error(string str)
         {
+            if (!Active)
+                return;
+
             var oldColor = Console.ForegroundColor;
             Console.ForegroundColor = ConsoleColor.Red;
             Console.WriteLine(str);
@@ -59,6 +70,9 @@ namespace UDGB
 
         internal static void DebugMsg(string str)
         {
+            if (!Active)
+                return;
+
             if (!DEBUG)
                 return;
             var oldColor = Console.ForegroundColor;
