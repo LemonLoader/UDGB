@@ -59,7 +59,7 @@ namespace UDGB
 
             if (args[0] == "list")
             {
-                List<string> noTypeVersions = [];
+                List<string> noTypeVersions = new List<string>();
                 foreach (var version in UnityVersion.VersionTbl)
                 {
                     string type = version.Version.ToStringWithoutType();
